@@ -2,11 +2,16 @@
 # With thanks to https://github.com/brennv/flask-ansible-example as a starting point
 
 ---
-# Install system apt pa
+# Install needed packages and create app directory
 - hosts: webservers
   become: yes
   become_method: sudo
   tasks:
+  # Make sure we require a key for root logins -- alternatively we could disable altogether
+  - name: Require key for root login via ssh
+    lineinfile: dest=/etc/ssh/sshd_config regexp="^PermitRootLogin" line="PermitRootLogin without-password" state=present
+    notify:
+      - restart ssh
   - name: update cache
     apt: name=python-software-properties state=present update_cache=yes cache_valid_time=43200
   - name: install packages
@@ -44,11 +49,11 @@
       virtualenv: /opt/{{ app_name }}/env
 
 
-# Configure app upstart service and nginx
 - hosts: webservers
   become: yes
   become_method: sudo
   tasks:
+# Configure app upstart service
   - name: copy wsgi.py
     copy:
       src: wsgi.py
@@ -57,39 +62,48 @@
     template:
       src: upstart.conf
       dest: /etc/init/{{ app_name }}.conf
+
   - name: start upstart app service
     service: 
       name: "{{ app_name }}" 
       state: restarted 
       enabled: yes
+
+# Configure nginx
   - name: template nginx site config
     template:
       src: nginx.conf
       dest: /etc/nginx/sites-available/{{ app_name }}
+
   - name: remove default nginx site config
     file: path=/etc/nginx/sites-enabled/default state=absent
+
   - name: enable nginx site
     file:
       src: /etc/nginx/sites-available/{{ app_name }}
       dest: /etc/nginx/sites-enabled/default
       state: link
       force: yes
+
   - name: create /etc/nginx/ssl
     file: 
       path: "/etc/nginx/ssl/" 
       state: directory
+
   - name: copy server certificate
     copy:
       src: ./secrets/server.crt
       dest: /etc/nginx/ssl/server.crt
       mode: 0600
       force: yes
+
   - name: copy server key
     copy:
       src: ./secrets/server.key
       dest: /etc/nginx/ssl/server.key
       mode: 0600
       force: yes
+
   - name: copy nginx htpasswd
     copy:
       src: ./secrets/htpasswd
@@ -98,26 +112,40 @@
       owner: www-data
       group: www-data
       force: yes
+
   - name: restart nginx
     service: 
       name: nginx 
       state: restarted
       enabled: yes
-  - name: open firewall for nginx
-    ufw:
-      rule: allow
-      name: Nginx Full
 
-# Run a quick test to verify the site is working
-#- hosts: webservers
-#  tasks:
-#  - name: get url
-#    get_url:
-#      url: http://{{inventory_hostname}}
-#      dest: /tmp/index.html
-#  - name: read html
-#    shell: cat /tmp/index.html
-#    register: html_contents
-#  - name: check for string in html
-#    when: html_contents.stdout.find('hello') != -1
-#    debug: msg="success!"
+# Set up firewall rules
+  - name: Install ufw
+    apt: package=ufw state=present
+
+  - name: Configure ufw defaults
+    ufw: direction={{ item.direction }} policy={{ item.policy }}
+    with_items:
+      - { direction: 'incoming', policy: 'deny' }
+      - { direction: 'outgoing', policy: 'allow' }
+    notify:
+      - restart ufw
+
+  - name: Configure ufw rules
+    ufw: rule={{ item.rule }} port={{ item.port }} proto={{ item.proto }}
+    with_items:
+      - { rule: 'limit', port: '22', proto: 'tcp' }
+      - { rule: 'allow', port: '443', proto: 'tcp' }
+    notify:
+      - restart ufw
+
+  - name: Enable ufw logging
+    ufw: logging=on
+    notify:
+      - restart ufw
+
+  - name: Enable ufw
+    ufw: state=enabled
+
+  handlers:
+  - include: handlers.yml
