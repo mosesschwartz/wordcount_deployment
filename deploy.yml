@@ -32,6 +32,7 @@
       repo: 'https://github.com/{{ github_user }}/{{ app_name }}.git'
       dest: /opt/{{ app_name }}
       update: yes  # Does a git pull if the repo already exists
+      force: yes
   - name: install modules in a virtualenv
     pip:
       requirements: /opt/{{ app_name }}/requirements.txt
@@ -72,6 +73,30 @@
       src: /etc/nginx/sites-available/{{ app_name }}
       dest: /etc/nginx/sites-enabled/default
       state: link
+      force: yes
+  - name: create /etc/nginx/ssl
+    file: 
+      path: "/etc/nginx/ssl/" 
+      state: directory
+  - name: copy server certificate
+    copy:
+      src: ./secrets/server.crt
+      dest: /etc/nginx/ssl/server.crt
+      mode: 0600
+      force: yes
+  - name: copy server key
+    copy:
+      src: ./secrets/server.key
+      dest: /etc/nginx/ssl/server.key
+      mode: 0600
+      force: yes
+  - name: copy nginx htpasswd
+    copy:
+      src: ./secrets/htpasswd
+      dest: /etc/nginx/.htpasswd
+      mode: 0600
+      owner: www-data
+      group: www-data
       force: yes
   - name: restart nginx
     service: 
