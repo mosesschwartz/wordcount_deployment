@@ -1,0 +1,98 @@
+# Ansible playbook for deploying a wordcount app
+# With thanks to https://github.com/brennv/flask-ansible-example as a starting point
+
+---
+# Install system apt pa
+- hosts: webservers
+  become: yes
+  become_method: sudo
+  tasks:
+  - name: update cache
+    apt: name=python-software-properties state=present update_cache=yes cache_valid_time=43200
+  - name: install packages
+    apt: name={{item}} state=present
+    with_items:
+      - python-pip 
+      - python-dev  
+      - python3-pip
+      - python3-dev
+      - python3.4-venv
+      - nginx
+      - git
+  - name: create app directory
+    file: path="/opt/{{ app_name }}" state=directory owner={{ app_user }} group={{ app_user }}
+
+# Install the app, become app_user so we don't have to fix permissions
+- hosts: webservers
+  become_user: "{{ app_user }}"
+  become_method: sudo
+  tasks:
+  - name: clone repo
+    git:
+      repo: 'https://github.com/{{ github_user }}/{{ app_name }}.git'
+      dest: /opt/{{ app_name }}
+      update: yes  # Does a git pull if the repo already exists
+  - name: install modules in a virtualenv
+    pip:
+      requirements: /opt/{{ app_name }}/requirements.txt
+      virtualenv: /opt/{{ app_name }}/env
+      virtualenv_command: /usr/bin/python3 -m venv
+  - name: install gunicorn too
+    pip:
+      name: gunicorn
+      virtualenv: /opt/{{ app_name }}/env
+
+
+# Configure app upstart service and nginx
+- hosts: webservers
+  become: yes
+  become_method: sudo
+  tasks:
+  - name: copy wsgi.py
+    copy:
+      src: wsgi.py
+      dest: /opt/{{ app_name }}/wsgi.py
+  - name: template upstart service config
+    template:
+      src: upstart.conf
+      dest: /etc/init/{{ app_name }}.conf
+  - name: start upstart app service
+    service: 
+      name: "{{ app_name }}" 
+      state: restarted 
+      enabled: yes
+  - name: template nginx site config
+    template:
+      src: nginx.conf
+      dest: /etc/nginx/sites-available/{{ app_name }}
+  - name: remove default nginx site config
+    file: path=/etc/nginx/sites-enabled/default state=absent
+  - name: enable nginx site
+    file:
+      src: /etc/nginx/sites-available/{{ app_name }}
+      dest: /etc/nginx/sites-enabled/default
+      state: link
+      force: yes
+  - name: restart nginx
+    service: 
+      name: nginx 
+      state: restarted
+      enabled: yes
+  - name: open firewall for nginx
+    ufw:
+      rule: allow
+      name: Nginx Full
+
+# Run a quick test to verify the site is working
+#- hosts: webservers
+#  tasks:
+#  - name: get url
+#    get_url:
+#      url: http://{{inventory_hostname}}
+#      dest: /tmp/index.html
+#  - name: read html
+#    shell: cat /tmp/index.html
+#    register: html_contents
+#  - name: check for string in html
+#    when: html_contents.stdout.find('hello') != -1
+#    debug: msg="success!"

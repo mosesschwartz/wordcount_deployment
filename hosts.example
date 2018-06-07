@@ -1,0 +1,10 @@
+[webservers]
+# Add hosts here
+127.0.0.1
+
+[webservers:vars]
+# Local variables for Ansible playbooks
+ansible_ssh_user=root
+app_user=www-data
+github_user=mosesschwartz
+app_name=wordcount
